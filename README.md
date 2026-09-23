@@ -66,6 +66,20 @@ deactivate
 4. The right panel shows the selected author's citations, led by their list of
    publication **years** and the year range.
 
+### Filters
+
+A filter row sits under the buttons; both narrow the reference set *before*
+ranking, so only matching authors and citations are shown:
+
+- **Years … to …** — keep only references whose year falls in the range. Leave one
+  box empty for an open bound (e.g. `2022` to blank = 2022 onward). Undated
+  references are excluded while a year filter is active.
+- **Title contains** — keep only references whose title contains the keyword
+  (case-insensitive). Useful for finding who publishes on a topic, e.g. `handover`.
+
+Press **Enter** in any filter box or click **Apply filters**; **Reset** clears
+them. The status line shows how many references matched (e.g. `18/141 refs`).
+
 References are expected in numbered style (`[1]`, `[2]`, …), ACM/IEEE-like:
 
 ```

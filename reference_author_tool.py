@@ -177,28 +177,70 @@ def extract_year(entry_text):
     return int(m.group(1)) if m else None
 
 
-def analyse(text):
-    """Parse text and return (ranking, author_to_refs).
+def extract_title(entry_text):
+    """Return the (approximate) title of a reference.
 
-    ranking:        list of (name, count) sorted by count desc, then name.
-    author_to_refs: dict name -> list of (number, year, entry_text) they appear in.
+    In ACM/IEEE style the title is the sentence right after '. YEAR. '. It ends at
+    the first sentence terminator ('. ', '? ', '! ') that precedes the venue.
     """
-    entries = split_entries(text)
-    author_to_refs = defaultdict(list)
+    m = re.match(r'.*?\.\s+(?:1[6-9]\d\d|20\d\d)\.\s+(.*)', entry_text)
+    if not m:
+        return ""
+    region = m.group(1)
+    cut = len(region)
+    for term in (". ", "? ", "! "):
+        i = region.find(term)
+        if i != -1:
+            cut = min(cut, i)
+    return region[:cut].strip()
 
-    for num, entry in entries:
-        year = extract_year(entry)
-        seen = set()
+
+def parse_records(text):
+    """Parse text into a list of reference records.
+
+    Each record: {'num', 'year', 'title', 'authors' (deduped list), 'entry'}.
+    """
+    records = []
+    for num, entry in split_entries(text):
+        authors, seen = [], set()
         for author in extract_authors(entry):
-            # Count an author once per reference even if listed twice.
             if author in seen:
                 continue
             seen.add(author)
-            author_to_refs[author].append((num, year, entry))
+            authors.append(author)
+        records.append({
+            "num": num,
+            "year": extract_year(entry),
+            "title": extract_title(entry),
+            "authors": authors,
+            "entry": entry,
+        })
+    return records
 
+
+def rank_records(records):
+    """Build (ranking, author_to_refs) from a list of records.
+
+    ranking:        list of (name, count) sorted by count desc, then name.
+    author_to_refs: dict name -> list of (number, year, entry_text).
+    """
+    author_to_refs = defaultdict(list)
+    for r in records:
+        for author in r["authors"]:
+            author_to_refs[author].append((r["num"], r["year"], r["entry"]))
     ranking = sorted(author_to_refs.items(), key=lambda kv: (-len(kv[1]), kv[0].lower()))
     ranking = [(name, len(refs)) for name, refs in ranking]
-    return ranking, author_to_refs, len(entries)
+    return ranking, author_to_refs
+
+
+def analyse(text):
+    """Convenience wrapper: parse and rank in one call.
+
+    Returns (ranking, author_to_refs, n_entries).
+    """
+    records = parse_records(text)
+    ranking, author_to_refs = rank_records(records)
+    return ranking, author_to_refs, len(records)
 
 
 # --------------------------------------------------------------------------- #
@@ -213,6 +255,7 @@ class App(tk.Tk):
         self.minsize(820, 560)
 
         self.author_to_refs = {}
+        self.records = []
 
         self._build_ui()
 
@@ -259,6 +302,28 @@ class App(tk.Tk):
         ttk.Button(btns, text="Clear", command=self.on_clear).pack(side="left", padx=6)
         self.status = ttk.Label(btns, text="")
         self.status.pack(side="left", padx=12)
+
+        # Filter row: year range + title keyword
+        filt = ttk.Frame(self)
+        filt.pack(fill="x", padx=8, pady=(0, 6))
+
+        ttk.Label(filt, text="Years:").pack(side="left")
+        self.year_from = ttk.Entry(filt, width=6)
+        self.year_from.pack(side="left", padx=(4, 2))
+        ttk.Label(filt, text="to").pack(side="left")
+        self.year_to = ttk.Entry(filt, width=6)
+        self.year_to.pack(side="left", padx=(2, 12))
+
+        ttk.Label(filt, text="Title contains:").pack(side="left")
+        self.keyword = ttk.Entry(filt, width=24)
+        self.keyword.pack(side="left", padx=(4, 8))
+
+        ttk.Button(filt, text="Apply filters", command=self._apply_filters).pack(side="left")
+        ttk.Button(filt, text="Reset", command=self._reset_filters).pack(side="left", padx=6)
+
+        # Apply on Enter from any filter field.
+        for widget in (self.year_from, self.year_to, self.keyword):
+            widget.bind("<Return>", lambda _e: self._apply_filters())
 
         # Bottom: split pane — ranking on left, citations on right
         panes = ttk.Panedwindow(self, orient="horizontal")
@@ -336,6 +401,8 @@ class App(tk.Tk):
 
     def on_clear(self):
         self.input_text.delete("1.0", "end")
+        self.records = []
+        self.author_to_refs = {}
         self.tree.delete(*self.tree.get_children())
         self._set_detail("")
         self.status.config(text="")
@@ -345,26 +412,76 @@ class App(tk.Tk):
         if not text:
             messagebox.showinfo("Nothing to analyze", "Paste some references first.")
             return
+        # Parse once; filtering re-uses these records without re-parsing.
+        self.records = parse_records(text)
+        self._apply_filters()
 
-        ranking, author_to_refs, n_entries = analyse(text)
+    def _reset_filters(self):
+        self.year_from.delete(0, "end")
+        self.year_to.delete(0, "end")
+        self.keyword.delete(0, "end")
+        self._apply_filters()
+
+    def _read_year(self, entry):
+        val = entry.get().strip()
+        if not val:
+            return None
+        m = re.search(r'\d{4}', val)
+        return int(m.group(0)) if m else None
+
+    def _apply_filters(self):
+        if not self.records:
+            return
+        y_from = self._read_year(self.year_from)
+        y_to = self._read_year(self.year_to)
+        if y_from and y_to and y_from > y_to:
+            y_from, y_to = y_to, y_from  # tolerate swapped bounds
+        kw = self.keyword.get().strip().lower()
+        year_active = y_from is not None or y_to is not None
+
+        filtered = []
+        for r in self.records:
+            if kw and kw not in r["title"].lower():
+                continue
+            if year_active:
+                if r["year"] is None:
+                    continue  # can't place an undated ref in a year range
+                if y_from is not None and r["year"] < y_from:
+                    continue
+                if y_to is not None and r["year"] > y_to:
+                    continue
+            filtered.append(r)
+
+        ranking, author_to_refs = rank_records(filtered)
         self.author_to_refs = author_to_refs
 
         self.tree.delete(*self.tree.get_children())
         for name, count in ranking:
             self.tree.insert("", "end", iid=name, values=(count, name))
 
+        # Build a short description of the active filters.
+        bits = []
+        if year_active:
+            lo = y_from if y_from is not None else "…"
+            hi = y_to if y_to is not None else "…"
+            bits.append(f"years {lo}–{hi}")
+        if kw:
+            bits.append(f"title~“{kw}”")
+        filt_desc = f" [filtered: {', '.join(bits)}]" if bits else ""
+
         if ranking:
             top_name, top_count = ranking[0]
             self.status.config(
-                text=f"{n_entries} references · {len(ranking)} distinct authors · "
-                     f"most frequent: {top_name} ({top_count})")
-            # Auto-select the most frequent author.
+                text=f"{len(filtered)}/{len(self.records)} refs · "
+                     f"{len(ranking)} authors · top: {top_name} ({top_count}){filt_desc}")
             self.tree.selection_set(top_name)
             self.tree.focus(top_name)
             self.tree.see(top_name)
             self._show_author(top_name)
         else:
-            self.status.config(text=f"{n_entries} references · no authors detected")
+            self.status.config(
+                text=f"0/{len(self.records)} refs match{filt_desc} · no authors")
+            self.detail_label.config(text="Citations")
             self._set_detail("")
 
     def on_select_author(self, _event):
