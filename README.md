@@ -1,0 +1,100 @@
+# Reference Author Frequency Tool
+
+A small Tkinter desktop app that reads a paper's references (pasted text, a `.txt`
+file, or a **PDF**), ranks the authors by how many references they appear in, and —
+for the selected author — lists their citations and the **years** those references
+were published.
+
+---
+
+## Requirements
+
+- **Python 3.9+** with **Tkinter** (Tkinter ships with the Python standard library
+  — it is not a pip package).
+- Python packages in [`requirements.txt`](requirements.txt): `pymupdf`, `pypdf`
+  (only needed for PDF input; pasting/loading text works without them).
+
+> **macOS note:** the system Python's Tk (8.5.9) has a bug where the window can
+> appear all-white until resized. The app already works around this, but for the
+> best result use a Python that bundles a modern Tk 8.6 (see Troubleshooting).
+
+---
+
+## Setup — create a virtual environment
+
+From a terminal, in the project folder:
+
+```bash
+cd path/to/AC_Reference_Tool     # the folder containing this project
+
+# 1. Create the virtual environment with Python 3.13 (bundles modern Tk 9.0)
+/opt/homebrew/bin/python3.13 -m venv .venv
+
+# 2. Activate it
+source .venv/bin/activate          # macOS / Linux
+# .venv\Scripts\activate           # Windows (PowerShell/cmd)
+
+# 3. Upgrade pip and install dependencies
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+## Run
+
+With the virtual environment activated:
+
+```bash
+python reference_author_tool.py
+```
+
+To leave the environment when you're done:
+
+```bash
+deactivate
+```
+
+---
+
+## Usage
+
+1. **Load PDF…** — pick a paper's PDF. The tool extracts the text, finds the
+   *References* section, and analyses it automatically.
+2. **Load text…** — load a `.txt` file of references, or just paste them into the
+   box and click **Analyze**.
+3. The left panel ranks authors by citation count; the most frequent is selected
+   automatically.
+4. The right panel shows the selected author's citations, led by their list of
+   publication **years** and the year range.
+
+References are expected in numbered style (`[1]`, `[2]`, …), ACM/IEEE-like:
+
+```
+[1] Naoko Abe, Yue Hu, and Eiichi Yoshida. 2024. Human understanding of robot action. ...
+```
+
+---
+
+## Troubleshooting
+
+### `ModuleNotFoundError: No module named 'tkinter'`
+Your Python was built without Tk. Install a Python that includes it:
+
+- **macOS (Homebrew):** `brew install python-tk@3.13`, then run with
+  `/opt/homebrew/bin/python3.13`.
+- **Or** install Python from [python.org](https://www.python.org/downloads/),
+  which bundles Tk 8.6.
+- **Ubuntu/Debian:** `sudo apt install python3-tk`.
+
+### Window appears all white (macOS)
+This is the old system-Tk 8.5.9 bug. The app auto-nudges the window to force a
+redraw; if it persists, run under a Python with Tk 8.6 (see above). You can check
+your Tk version with:
+
+```bash
+python -c "import tkinter; r=tkinter.Tk(); print(r.tk.call('info','patchlevel'))"
+```
+
+### PDF loads but no references are found
+PDF text extraction of two-column papers can occasionally merge or mangle lines.
+The extracted text stays editable in the box — fix any issues and click
+**Analyze**, or the paper may use a non-`[n]` numbering style.

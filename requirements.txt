@@ -1,0 +1,11 @@
+# Reference Author Frequency Tool — dependencies
+#
+# NOTE: Tkinter (the GUI) is part of the Python standard library, so it is NOT
+# listed here. It cannot be installed with pip. If `import tkinter` fails, see
+# the README (install a Python that bundles Tk, e.g. `brew install python-tk`).
+
+# PDF text extraction (preferred backend — fast, high quality)
+pymupdf>=1.24
+
+# PDF text extraction (fallback backend, used automatically if PyMuPDF is absent)
+pypdf>=4.0
