@@ -256,6 +256,7 @@ class App(tk.Tk):
 
         self.author_to_refs = {}
         self.records = []
+        self.current_ranking = []       # [(name, count)] after filters/exclusions
         self.excluded_refs = set()      # reference numbers removed from the pool
         self.excluded_authors = set()   # author names removed from the ranking
 
@@ -339,6 +340,17 @@ class App(tk.Tk):
         left = ttk.Frame(panes)
         ttk.Label(left, text="Authors by frequency  (click ✕ to exclude an author)",
                   font=("TkDefaultFont", 11, "bold")).pack(anchor="w")
+
+        # Live search box to find an author in the ranking by name.
+        search_row = ttk.Frame(left)
+        search_row.pack(fill="x", pady=(2, 4))
+        ttk.Label(search_row, text="Find author:").pack(side="left")
+        self.author_search = ttk.Entry(search_row)
+        self.author_search.pack(side="left", fill="x", expand=True, padx=(4, 4))
+        self.author_search.bind("<KeyRelease>", lambda _e: self._populate_author_tree())
+        ttk.Button(search_row, text="✕", width=2,
+                   command=self._clear_author_search).pack(side="left")
+
         cols = ("rm", "count", "name")
         self.tree = ttk.Treeview(left, columns=cols, show="headings", selectmode="browse")
         self.tree.heading("rm", text="")
@@ -420,8 +432,10 @@ class App(tk.Tk):
         self.input_text.delete("1.0", "end")
         self.records = []
         self.author_to_refs = {}
+        self.current_ranking = []
         self.excluded_refs.clear()
         self.excluded_authors.clear()
+        self.author_search.delete(0, "end")
         self.tree.delete(*self.tree.get_children())
         self._refresh_excluded_bar()
         self._set_detail("")
@@ -486,10 +500,7 @@ class App(tk.Tk):
         for name in self.excluded_authors:
             author_to_refs.pop(name, None)
         self.author_to_refs = author_to_refs
-
-        self.tree.delete(*self.tree.get_children())
-        for name, count in ranking:
-            self.tree.insert("", "end", iid=name, values=("✕", count, name))
+        self.current_ranking = ranking
 
         self._refresh_excluded_bar()
 
@@ -508,20 +519,47 @@ class App(tk.Tk):
         filt_desc = f" [{', '.join(bits)}]" if bits else ""
 
         if ranking:
-            # Keep the previously selected author if they survive; else pick the top.
-            names = [n for n, _ in ranking]
-            target = prev_selection if prev_selection in names else names[0]
             top_name, top_count = ranking[0]
             self.status.config(
                 text=f"{len(filtered)}/{len(self.records)} refs · "
                      f"{len(ranking)} authors · top: {top_name} ({top_count}){filt_desc}")
+        else:
+            self.status.config(
+                text=f"0/{len(self.records)} refs match{filt_desc} · no authors")
+
+        # Render the tree (honouring the author-search box) and select a target.
+        self._populate_author_tree(prefer=prev_selection)
+
+    def _clear_author_search(self):
+        self.author_search.delete(0, "end")
+        self._populate_author_tree()
+
+    def _populate_author_tree(self, prefer=None):
+        """Fill the ranking tree from self.current_ranking, filtered by the
+        'Find author' box. Keeps a sensible selection.
+
+        prefer: an author name to re-select if still visible (defaults to the
+        currently selected author).
+        """
+        if prefer is None and self.tree.selection():
+            prefer = self.tree.selection()[0]
+
+        query = self.author_search.get().strip().lower()
+        rows = [(n, c) for n, c in self.current_ranking if query in n.lower()]
+
+        self.tree.delete(*self.tree.get_children())
+        for name, count in rows:
+            self.tree.insert("", "end", iid=name, values=("✕", count, name))
+
+        names = [n for n, _ in rows]
+        if names:
+            target = prefer if prefer in names else names[0]
             self.tree.selection_set(target)
             self.tree.focus(target)
             self.tree.see(target)
             self._show_author(target)
         else:
-            self.status.config(
-                text=f"0/{len(self.records)} refs match{filt_desc} · no authors")
+            # No author matches the search; leave the citations panel empty.
             self.detail_label.config(text="Citations  (click ✕ to exclude a paper)")
             self._set_detail("")
 

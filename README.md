@@ -62,7 +62,8 @@ deactivate
 2. **Load text…** — load a `.txt` file of references, or just paste them into the
    box and click **Analyze**.
 3. The left panel ranks authors by citation count; the most frequent is selected
-   automatically.
+   automatically. Use the **Find author** box above the list to filter it to names
+   containing what you type (counts are unchanged — it just narrows the display).
 4. The right panel shows the selected author's citations, led by their list of
    publication **years** and the year range.
 
