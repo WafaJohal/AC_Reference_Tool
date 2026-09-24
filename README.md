@@ -80,6 +80,22 @@ ranking, so only matching authors and citations are shown:
 Press **Enter** in any filter box or click **Apply filters**; **Reset** clears
 them. The status line shows how many references matched (e.g. `18/141 refs`).
 
+### Excluding papers and authors (self-citation handling)
+
+Authors often cite themselves, which inflates the counts. You can remove items
+from the tally:
+
+- **Exclude a paper** — click the red **✕** next to any citation in the right
+  panel. The whole reference leaves the pool, so its co-authors also stop getting
+  credit for it.
+- **Exclude an author** — click the **✕** in the first column of the ranking
+  table. That person is dropped from the ranking (their co-authored papers still
+  count towards everyone else).
+
+Excluded items appear as chips in the **Excluded** bar; click a chip to restore
+it, or **Clear all** to reset. Exclusions clear automatically when you analyse a
+new set of references.
+
 References are expected in numbered style (`[1]`, `[2]`, …), ACM/IEEE-like:
 
 ```

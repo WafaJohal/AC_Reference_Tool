@@ -256,6 +256,8 @@ class App(tk.Tk):
 
         self.author_to_refs = {}
         self.records = []
+        self.excluded_refs = set()      # reference numbers removed from the pool
+        self.excluded_authors = set()   # author names removed from the ranking
 
         self._build_ui()
 
@@ -325,35 +327,50 @@ class App(tk.Tk):
         for widget in (self.year_from, self.year_to, self.keyword):
             widget.bind("<Return>", lambda _e: self._apply_filters())
 
+        # Excluded items bar (populated dynamically).
+        self.excl_frame = ttk.Frame(self)
+        self.excl_frame.pack(fill="x", padx=8, pady=(0, 4))
+
         # Bottom: split pane — ranking on left, citations on right
         panes = ttk.Panedwindow(self, orient="horizontal")
         panes.pack(fill="both", expand=True, padx=8, pady=(0, 8))
 
-        # Left: ranking
+        # Left: ranking. The "rm" column shows a clickable ✕ to exclude an author.
         left = ttk.Frame(panes)
-        ttk.Label(left, text="Authors by frequency", font=("TkDefaultFont", 11, "bold")).pack(anchor="w")
-        cols = ("count", "name")
+        ttk.Label(left, text="Authors by frequency  (click ✕ to exclude an author)",
+                  font=("TkDefaultFont", 11, "bold")).pack(anchor="w")
+        cols = ("rm", "count", "name")
         self.tree = ttk.Treeview(left, columns=cols, show="headings", selectmode="browse")
+        self.tree.heading("rm", text="")
         self.tree.heading("count", text="#")
         self.tree.heading("name", text="Author")
-        self.tree.column("count", width=50, anchor="center", stretch=False)
+        self.tree.column("rm", width=28, anchor="center", stretch=False)
+        self.tree.column("count", width=44, anchor="center", stretch=False)
         self.tree.column("name", width=240, anchor="w")
         self.tree.pack(side="left", fill="both", expand=True)
         tsb = ttk.Scrollbar(left, orient="vertical", command=self.tree.yview)
         tsb.pack(side="right", fill="y")
         self.tree.configure(yscrollcommand=tsb.set)
         self.tree.bind("<<TreeviewSelect>>", self.on_select_author)
+        self.tree.bind("<Button-1>", self.on_author_click)
         panes.add(left, weight=1)
 
-        # Right: citations for selected author
+        # Right: citations for selected author. Each citation carries a clickable
+        # ✕ (a Text tag) that excludes that whole paper from the counts.
         right = ttk.Frame(panes)
-        self.detail_label = ttk.Label(right, text="Citations", font=("TkDefaultFont", 11, "bold"))
+        self.detail_label = ttk.Label(right, text="Citations  (click ✕ to exclude a paper)",
+                                      font=("TkDefaultFont", 11, "bold"))
         self.detail_label.pack(anchor="w")
-        self.detail = tk.Text(right, wrap="word", font=("TkDefaultFont", 11), state="disabled")
+        self.detail = tk.Text(right, wrap="word", font=("TkDefaultFont", 11), state="disabled",
+                              cursor="arrow")
         self.detail.pack(side="left", fill="both", expand=True)
         dsb = ttk.Scrollbar(right, orient="vertical", command=self.detail.yview)
         dsb.pack(side="right", fill="y")
         self.detail.configure(yscrollcommand=dsb.set)
+        # Styling for the clickable ✕ and the year-summary header.
+        self.detail.tag_configure("cross", foreground="#c0392b",
+                                  font=("TkDefaultFont", 11, "bold"))
+        self.detail.tag_configure("header", foreground="#555555")
         panes.add(right, weight=2)
 
     # ---- actions --------------------------------------------------------- #
@@ -403,7 +420,10 @@ class App(tk.Tk):
         self.input_text.delete("1.0", "end")
         self.records = []
         self.author_to_refs = {}
+        self.excluded_refs.clear()
+        self.excluded_authors.clear()
         self.tree.delete(*self.tree.get_children())
+        self._refresh_excluded_bar()
         self._set_detail("")
         self.status.config(text="")
 
@@ -414,6 +434,9 @@ class App(tk.Tk):
             return
         # Parse once; filtering re-uses these records without re-parsing.
         self.records = parse_records(text)
+        # A fresh parse invalidates previous exclusions (ref numbers may differ).
+        self.excluded_refs.clear()
+        self.excluded_authors.clear()
         self._apply_filters()
 
     def _reset_filters(self):
@@ -439,8 +462,12 @@ class App(tk.Tk):
         kw = self.keyword.get().strip().lower()
         year_active = y_from is not None or y_to is not None
 
+        prev_selection = self.tree.selection()[0] if self.tree.selection() else None
+
         filtered = []
         for r in self.records:
+            if r["num"] in self.excluded_refs:          # paper removed from the pool
+                continue
             if kw and kw not in r["title"].lower():
                 continue
             if year_active:
@@ -453,11 +480,18 @@ class App(tk.Tk):
             filtered.append(r)
 
         ranking, author_to_refs = rank_records(filtered)
+        # Drop excluded authors from the ranking (their co-authored papers still
+        # count towards everyone else).
+        ranking = [(n, c) for n, c in ranking if n not in self.excluded_authors]
+        for name in self.excluded_authors:
+            author_to_refs.pop(name, None)
         self.author_to_refs = author_to_refs
 
         self.tree.delete(*self.tree.get_children())
         for name, count in ranking:
-            self.tree.insert("", "end", iid=name, values=(count, name))
+            self.tree.insert("", "end", iid=name, values=("✕", count, name))
+
+        self._refresh_excluded_bar()
 
         # Build a short description of the active filters.
         bits = []
@@ -467,22 +501,79 @@ class App(tk.Tk):
             bits.append(f"years {lo}–{hi}")
         if kw:
             bits.append(f"title~“{kw}”")
-        filt_desc = f" [filtered: {', '.join(bits)}]" if bits else ""
+        excl_n = len(self.excluded_refs)
+        excl_a = len(self.excluded_authors)
+        if excl_n or excl_a:
+            bits.append(f"excl {excl_n} paper(s)/{excl_a} author(s)")
+        filt_desc = f" [{', '.join(bits)}]" if bits else ""
 
         if ranking:
+            # Keep the previously selected author if they survive; else pick the top.
+            names = [n for n, _ in ranking]
+            target = prev_selection if prev_selection in names else names[0]
             top_name, top_count = ranking[0]
             self.status.config(
                 text=f"{len(filtered)}/{len(self.records)} refs · "
                      f"{len(ranking)} authors · top: {top_name} ({top_count}){filt_desc}")
-            self.tree.selection_set(top_name)
-            self.tree.focus(top_name)
-            self.tree.see(top_name)
-            self._show_author(top_name)
+            self.tree.selection_set(target)
+            self.tree.focus(target)
+            self.tree.see(target)
+            self._show_author(target)
         else:
             self.status.config(
                 text=f"0/{len(self.records)} refs match{filt_desc} · no authors")
-            self.detail_label.config(text="Citations")
+            self.detail_label.config(text="Citations  (click ✕ to exclude a paper)")
             self._set_detail("")
+
+    def _refresh_excluded_bar(self):
+        """Redraw the row of chips for currently excluded papers and authors."""
+        for child in self.excl_frame.winfo_children():
+            child.destroy()
+        if not self.excluded_refs and not self.excluded_authors:
+            return
+        ttk.Label(self.excl_frame, text="Excluded (click to restore):").pack(side="left")
+        for num in sorted(self.excluded_refs):
+            b = ttk.Button(self.excl_frame, text=f"[{num}] ✕", width=7,
+                           command=lambda n=num: self._restore_ref(n))
+            b.pack(side="left", padx=2)
+        for name in sorted(self.excluded_authors):
+            b = ttk.Button(self.excl_frame, text=f"{name} ✕",
+                           command=lambda n=name: self._restore_author(n))
+            b.pack(side="left", padx=2)
+        ttk.Button(self.excl_frame, text="Clear all",
+                   command=self._clear_exclusions).pack(side="left", padx=8)
+
+    def _exclude_ref(self, num):
+        self.excluded_refs.add(num)
+        self._apply_filters()
+
+    def _restore_ref(self, num):
+        self.excluded_refs.discard(num)
+        self._apply_filters()
+
+    def _exclude_author(self, name):
+        self.excluded_authors.add(name)
+        self._apply_filters()
+
+    def _restore_author(self, name):
+        self.excluded_authors.discard(name)
+        self._apply_filters()
+
+    def _clear_exclusions(self):
+        self.excluded_refs.clear()
+        self.excluded_authors.clear()
+        self._apply_filters()
+
+    def on_author_click(self, event):
+        """Exclude an author when their ✕ (first column) is clicked."""
+        if self.tree.identify("region", event.x, event.y) != "cell":
+            return
+        if self.tree.identify_column(event.x) != "#1":  # the "rm" column
+            return
+        row = self.tree.identify_row(event.y)
+        if row:
+            self._exclude_author(row)
+            return "break"  # don't also select the row
 
     def on_select_author(self, _event):
         sel = self.tree.selection()
@@ -491,29 +582,39 @@ class App(tk.Tk):
 
     def _show_author(self, name):
         refs = self.author_to_refs.get(name, [])
-        self.detail_label.config(text=f"{name} — {len(refs)} citation(s)")
+        self.detail_label.config(text=f"{name} — {len(refs)} citation(s)   (click ✕ to exclude a paper)")
 
-        # Summary line: sorted list of years (with counts when a year repeats).
+        self.detail.config(state="normal")
+        self.detail.delete("1.0", "end")
+
+        # Year summary header.
         years = [y for _, y, _ in refs if y is not None]
-        header_lines = []
         if years:
             year_counts = {}
             for y in years:
                 year_counts[y] = year_counts.get(y, 0) + 1
-            parts = []
-            for y in sorted(year_counts):
-                parts.append(f"{y}" if year_counts[y] == 1 else f"{y} (×{year_counts[y]})")
+            parts = [f"{y}" if year_counts[y] == 1 else f"{y} (×{year_counts[y]})"
+                     for y in sorted(year_counts)]
             span = f"{min(years)}–{max(years)}" if min(years) != max(years) else f"{min(years)}"
-            header_lines.append(f"Years: {', '.join(parts)}")
-            header_lines.append(f"Range: {span}   ·   {len(years)} dated / {len(refs)} total")
-            header_lines.append("")
+            self.detail.insert("end", f"Years: {', '.join(parts)}\n", "header")
+            self.detail.insert("end",
+                               f"Range: {span}   ·   {len(years)} dated / {len(refs)} total\n\n",
+                               "header")
 
-        body_lines = []
+        # Each citation: a clickable ✕ followed by the reference text.
         for num, year, entry in refs:
             yr = year if year is not None else "n.d."
-            body_lines.append(f"[{num}] ({yr}) {entry}")
+            tag = f"rm{num}"
+            self.detail.tag_configure(tag)
+            self.detail.tag_bind(tag, "<Button-1>", lambda _e, n=num: self._exclude_ref(n))
+            self.detail.tag_bind(tag, "<Enter>",
+                                 lambda _e: self.detail.config(cursor="hand2"))
+            self.detail.tag_bind(tag, "<Leave>",
+                                 lambda _e: self.detail.config(cursor="arrow"))
+            self.detail.insert("end", "✕", ("cross", tag))
+            self.detail.insert("end", f"  [{num}] ({yr}) {entry}\n\n")
 
-        self._set_detail("\n".join(header_lines) + "\n\n".join(body_lines))
+        self.detail.config(state="disabled")
 
     def _set_detail(self, text):
         self.detail.config(state="normal")
